@@ -5,6 +5,7 @@ import sqlite3
 import hashlib
 import datetime
 import io
+import time
 from dotenv import load_dotenv
 
 # 追加ライブラリ
@@ -92,26 +93,56 @@ def authenticate_user(username, password):
     else:
         return None
 
-# 履歴を保存する関数
+# 履歴を保存する関数（日本時間のタイムスタンプを使用）
 def save_history(user_id, action_type, content, result, file_name=None):
     conn = sqlite3.connect('app_data.db')
     c = conn.cursor()
     
+    # タイムスタンプを日本時間（JST）で生成
+    jst_now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
+    jst_timestamp = jst_now.strftime('%Y-%m-%d %H:%M:%S')
+    
     c.execute("""
-    INSERT INTO history (user_id, action_type, content, result, file_name) 
-    VALUES (?, ?, ?, ?, ?)
-    """, (user_id, action_type, content, result, file_name))
+    INSERT INTO history (user_id, action_type, content, result, file_name, created_at) 
+    VALUES (?, ?, ?, ?, ?, ?)
+    """, (user_id, action_type, content, result, file_name, jst_timestamp))
     
     conn.commit()
     conn.close()
 
-# ユーザーの履歴を取得する関数
+# 単一の履歴を削除する関数
+def delete_history_item(history_id):
+    conn = sqlite3.connect('app_data.db')
+    c = conn.cursor()
+    
+    c.execute("DELETE FROM history WHERE id = ?", (history_id,))
+    
+    conn.commit()
+    deleted = c.rowcount > 0
+    conn.close()
+    
+    return deleted
+
+# ユーザーの全履歴を削除する関数
+def delete_all_user_history(user_id):
+    conn = sqlite3.connect('app_data.db')
+    c = conn.cursor()
+    
+    c.execute("DELETE FROM history WHERE user_id = ?", (user_id,))
+    
+    conn.commit()
+    deleted_count = c.rowcount
+    conn.close()
+    
+    return deleted_count
+
+# ユーザーの履歴を取得する関数（IDを含める）
 def get_user_history(user_id):
     conn = sqlite3.connect('app_data.db')
     c = conn.cursor()
     
     c.execute("""
-    SELECT action_type, content, result, file_name, created_at 
+    SELECT id, action_type, content, result, file_name, created_at 
     FROM history 
     WHERE user_id = ? 
     ORDER BY created_at DESC
@@ -181,6 +212,8 @@ if 'user_id' not in st.session_state:
     st.session_state.user_id = None
 if 'username' not in st.session_state:
     st.session_state.username = None
+if 'confirm_delete_all' not in st.session_state:
+    st.session_state.confirm_delete_all = False
 
 # ログイン機能
 def login_page():
@@ -640,8 +673,7 @@ def text_proofreading(model, temperature):
                 
                 except Exception as e:
                     st.error(f"エラーが発生しました: {str(e)}")
-
-# 履歴閲覧機能
+# 履歴閲覧機能（削除機能追加）
 def view_history():
     st.header("利用履歴")
     
@@ -650,8 +682,8 @@ def view_history():
     if not history:
         st.info("まだ履歴がありません。")
     else:
-        # フィルタリングオプション
-        col1, col2 = st.columns([3, 1])
+        # フィルタリングオプションと削除ボタンを横に配置
+        col1, col2, col3 = st.columns([3, 1, 1])
         with col1:
             action_filter = st.selectbox(
                 "表示する操作タイプ:", 
@@ -659,12 +691,25 @@ def view_history():
                 index=0
             )
         
+        # 履歴全削除ボタン
+        with col3:
+            if st.button("履歴をすべて削除", type="secondary", key="delete_all_btn"):
+                if st.session_state.get('confirm_delete_all', False):
+                    deleted_count = delete_all_user_history(st.session_state.user_id)
+                    st.success(f"{deleted_count}件の履歴を削除しました。")
+                    st.session_state.confirm_delete_all = False
+                    time.sleep(1)  # 成功メッセージを表示するための短い遅延
+                    st.rerun()  # 画面を更新
+                else:
+                    st.session_state.confirm_delete_all = True
+                    st.warning("本当にすべての履歴を削除しますか？ もう一度ボタンを押すと削除されます。")
+        
         # ダウンロードボタンの配置
         with col2:
             # 履歴をテキスト形式に変換する関数
             def convert_history_to_text(history_data):
                 text = "# 履歴一覧\n\n"
-                for idx, (action_type, content, result, file_name, timestamp) in enumerate(history_data, 1):
+                for idx, (history_id, action_type, content, result, file_name, timestamp) in enumerate(history_data, 1):
                     text += f"## {idx}. {action_type} - {timestamp}\n"
                     if file_name:
                         text += f"ファイル名: {file_name}\n"
@@ -678,7 +723,7 @@ def view_history():
             # 履歴をCSV形式に変換する関数
             def convert_history_to_csv(history_data):
                 csv_content = "No,操作タイプ,ファイル名,タイムスタンプ,入力内容,結果\n"
-                for idx, (action_type, content, result, file_name, timestamp) in enumerate(history_data, 1):
+                for idx, (history_id, action_type, content, result, file_name, timestamp) in enumerate(history_data, 1):
                     # CSVでの特殊文字のエスケープ処理
                     safe_content = content.replace('"', '""') if content else ""
                     safe_result = result.replace('"', '""') if result else ""
@@ -690,51 +735,62 @@ def view_history():
         # 履歴のフィルタリングと表示
         filtered_history = history
         if action_filter != "すべて":
-            filtered_history = [h for h in history if h[0] == action_filter]
+            filtered_history = [h for h in history if h[1] == action_filter]
         
         if not filtered_history:
             st.info(f"{action_filter}の履歴はありません。")
         else:
-            for i, (action_type, content, result, file_name, timestamp) in enumerate(filtered_history):
+            for i, (history_id, action_type, content, result, file_name, timestamp) in enumerate(filtered_history):
                 history_title = f"{action_type} - {timestamp}"
                 if file_name:
                     history_title += f" ({file_name})"
-                    
+                
+                # 履歴の表示とアクションボタン
                 with st.expander(history_title):
-                    st.subheader("入力内容")
-                    st.text_area(
-                        label="入力内容", 
-                        value=content, 
-                        height=100, 
-                        key=f"content_{i}",
-                        label_visibility="collapsed"  # ラベルを非表示（存在するが表示しない）
-                    )
+                    # 削除ボタンを右上に配置
+                    col1, col2 = st.columns([10, 1])
+                    with col2:
+                        if st.button("🗑️", key=f"delete_btn_{history_id}"):
+                            if delete_history_item(history_id):
+                                st.success("履歴を削除しました。")
+                                time.sleep(1)  # 成功メッセージを表示するための短い遅延
+                                st.rerun()  # 画面を更新
                     
-                    st.subheader("結果")
-                    st.text_area(
-                        label="結果", 
-                        value=result, 
-                        height=200, 
-                        key=f"result_{i}",
-                        label_visibility="collapsed"  # ラベルを非表示（存在するが表示しない）
-                    )
-                    
-                    # 個別履歴のダウンロードボタン
-                    single_txt_data = f"# {action_type} - {timestamp}\n"
-                    if file_name:
-                        single_txt_data += f"ファイル名: {file_name}\n"
-                    single_txt_data += "\n## 入力内容\n"
-                    single_txt_data += f"{content}\n\n"
-                    single_txt_data += "## 結果\n"
-                    single_txt_data += f"{result}\n"
-                    
-                    st.download_button(
-                        label="この履歴をダウンロード",
-                        data=single_txt_data,
-                        file_name=f"{action_type}_{timestamp.replace(':', '-').replace(' ', '_')}.txt",
-                        mime="text/plain",
-                        key=f"download_single_{i}"
-                    )
+                    with col1:
+                        st.subheader("入力内容")
+                        st.text_area(
+                            label="入力内容", 
+                            value=content, 
+                            height=100, 
+                            key=f"content_{i}",
+                            label_visibility="collapsed"  # ラベルを非表示（存在するが表示しない）
+                        )
+                        
+                        st.subheader("結果")
+                        st.text_area(
+                            label="結果", 
+                            value=result, 
+                            height=200, 
+                            key=f"result_{i}",
+                            label_visibility="collapsed"  # ラベルを非表示（存在するが表示しない）
+                        )
+                        
+                        # 個別履歴のダウンロードボタン
+                        single_txt_data = f"# {action_type} - {timestamp}\n"
+                        if file_name:
+                            single_txt_data += f"ファイル名: {file_name}\n"
+                        single_txt_data += "\n## 入力内容\n"
+                        single_txt_data += f"{content}\n\n"
+                        single_txt_data += "## 結果\n"
+                        single_txt_data += f"{result}\n"
+                        
+                        st.download_button(
+                            label="この履歴をダウンロード",
+                            data=single_txt_data,
+                            file_name=f"{action_type}_{timestamp.replace(':', '-').replace(' ', '_')}.txt",
+                            mime="text/plain",
+                            key=f"download_single_{i}"
+                        )
 
 # フッター
 def footer():
