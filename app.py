@@ -19,7 +19,9 @@ if not api_key:
     st.stop()
 
 # OpenAIクライアントの初期化
-client = openai.OpenAI(api_key=api_key)
+import httpx
+http_client = httpx.Client()
+client = openai.OpenAI(api_key=api_key, http_client=http_client)
 
 # SQLiteデータベースのセットアップ
 def init_db():
