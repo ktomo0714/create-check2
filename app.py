@@ -12,13 +12,10 @@ import docx  # Word文書処理用
 import pptx  # PowerPoint処理用
 import PyPDF2  # PDF処理用（新規追加）
 
-# 環境変数の読み込み
-load_dotenv()
-
 # OpenAI APIキーの設定
-api_key = os.getenv("OPENAI_API_KEY")
+api_key = os.environ.get("OPENAI_API_KEY")
 if not api_key:
-    st.error("OpenAI APIキーが設定されていません。.envファイルに設定してください。")
+    st.error("OpenAI APIキーが設定されていません。Renderのダッシュボードで環境変数を設定してください。")
     st.stop()
 
 # OpenAIクライアントの初期化
