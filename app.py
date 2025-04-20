@@ -690,20 +690,7 @@ def view_history():
                 ["すべて", "テキスト生成", "テキスト校閲"],
                 index=0
             )
-        
-        # 履歴全削除ボタン
-        with col3:
-            if st.button("履歴をすべて削除", type="secondary", key="delete_all_btn"):
-                if st.session_state.get('confirm_delete_all', False):
-                    deleted_count = delete_all_user_history(st.session_state.user_id)
-                    st.success(f"{deleted_count}件の履歴を削除しました。")
-                    st.session_state.confirm_delete_all = False
-                    time.sleep(1)  # 成功メッセージを表示するための短い遅延
-                    st.rerun()  # 画面を更新
-                else:
-                    st.session_state.confirm_delete_all = True
-                    st.warning("本当にすべての履歴を削除しますか？ もう一度ボタンを押すと削除されます。")
-        
+            
         # ダウンロードボタンの配置
         with col2:
             # 履歴をテキスト形式に変換する関数
